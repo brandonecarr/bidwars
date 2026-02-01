@@ -3,25 +3,34 @@
 import { useEffect, useCallback, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { Session, Participant, Item } from "@/types/game";
+import type { Session, Participant, Item, Round } from "@/types/game";
 
 interface UseSessionOptions {
   code: string;
-  onAuctionStart?: (itemId: string) => void;
-  onAuctionEnd?: (itemId: string, result: string) => void;
-  onItemSold?: (payload: {
-    itemId: string;
+  onRoundStart?: (roundId: string, roundNumber: number) => void;
+  onRoundSold?: (payload: {
+    roundId: string;
     winnerId: string;
     winnerName: string;
     finalPrice: number;
   }) => void;
+  onRoundSkip?: (roundId: string) => void;
+  onRoundAssign?: (roundId: string, itemId: string) => void;
   onSessionEnd?: () => void;
 }
 
-export function useSession({ code, onAuctionStart, onAuctionEnd, onItemSold, onSessionEnd }: UseSessionOptions) {
+export function useSession({
+  code,
+  onRoundStart,
+  onRoundSold,
+  onRoundSkip,
+  onRoundAssign,
+  onSessionEnd,
+}: UseSessionOptions) {
   const [session, setSession] = useState<Session | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [items, setItems] = useState<Item[]>([]);
+  const [rounds, setRounds] = useState<Round[]>([]);
   const [loading, setLoading] = useState(true);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const supabaseRef = useRef(createClient());
@@ -51,8 +60,15 @@ export function useSession({ code, onAuctionStart, onAuctionEnd, onItemSold, onS
       .eq("session_id", sessionData.id)
       .order("sort_order", { ascending: true });
 
+    const roundsRes = await supabase
+      .from("rounds")
+      .select("*")
+      .eq("session_id", sessionData.id)
+      .order("round_number", { ascending: true });
+
     setParticipants((participantsRes.data as Participant[] | null) || []);
     setItems((itemsRes.data as Item[] | null) || []);
+    setRounds((roundsRes.data as Round[] | null) || []);
     setLoading(false);
   }, [code]);
 
@@ -67,7 +83,6 @@ export function useSession({ code, onAuctionStart, onAuctionEnd, onItemSold, onS
 
     const channel = supabase
       .channel(`session:${code}`)
-      // Listen for participant changes
       .on(
         "postgres_changes",
         {
@@ -81,7 +96,11 @@ export function useSession({ code, onAuctionStart, onAuctionEnd, onItemSold, onS
             setParticipants((prev) => [...prev, payload.new as Participant]);
           } else if (payload.eventType === "UPDATE") {
             setParticipants((prev) =>
-              prev.map((p) => (p.id === (payload.new as Participant).id ? (payload.new as Participant) : p))
+              prev.map((p) =>
+                p.id === (payload.new as Participant).id
+                  ? (payload.new as Participant)
+                  : p
+              )
             );
           } else if (payload.eventType === "DELETE") {
             setParticipants((prev) =>
@@ -90,7 +109,6 @@ export function useSession({ code, onAuctionStart, onAuctionEnd, onItemSold, onS
           }
         }
       )
-      // Listen for item changes
       .on(
         "postgres_changes",
         {
@@ -115,7 +133,26 @@ export function useSession({ code, onAuctionStart, onAuctionEnd, onItemSold, onS
           }
         }
       )
-      // Listen for session changes
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "rounds",
+          filter: `session_id=eq.${session.id}`,
+        },
+        (payload) => {
+          if (payload.eventType === "INSERT") {
+            setRounds((prev) => [...prev, payload.new as Round]);
+          } else if (payload.eventType === "UPDATE") {
+            setRounds((prev) =>
+              prev.map((r) =>
+                r.id === (payload.new as Round).id ? (payload.new as Round) : r
+              )
+            );
+          }
+        }
+      )
       .on(
         "postgres_changes",
         {
@@ -128,15 +165,17 @@ export function useSession({ code, onAuctionStart, onAuctionEnd, onItemSold, onS
           setSession(payload.new as Session);
         }
       )
-      // Listen for broadcast events
-      .on("broadcast", { event: "auction:start" }, ({ payload }) => {
-        onAuctionStart?.(payload.itemId);
+      .on("broadcast", { event: "round:start" }, ({ payload }) => {
+        onRoundStart?.(payload.roundId, payload.roundNumber);
       })
-      .on("broadcast", { event: "auction:end" }, ({ payload }) => {
-        onAuctionEnd?.(payload.itemId, payload.result);
+      .on("broadcast", { event: "round:sold" }, ({ payload }) => {
+        onRoundSold?.(payload);
       })
-      .on("broadcast", { event: "item:sold" }, ({ payload }) => {
-        onItemSold?.(payload);
+      .on("broadcast", { event: "round:skip" }, ({ payload }) => {
+        onRoundSkip?.(payload.roundId);
+      })
+      .on("broadcast", { event: "round:assign" }, ({ payload }) => {
+        onRoundAssign?.(payload.roundId, payload.itemId);
       })
       .on("broadcast", { event: "session:end" }, () => {
         onSessionEnd?.();
@@ -149,15 +188,16 @@ export function useSession({ code, onAuctionStart, onAuctionEnd, onItemSold, onS
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [session?.id, code, onAuctionStart, onAuctionEnd, onItemSold, onSessionEnd, session]);
+  }, [session?.id, code, onRoundStart, onRoundSold, onRoundSkip, onRoundAssign, onSessionEnd, session]);
 
-  const activeItem = items.find((item) => item.status === "active") || null;
+  const activeRound = rounds.find((r) => r.status === "active") || null;
 
   return {
     session,
     participants,
     items,
-    activeItem,
+    rounds,
+    activeRound,
     loading,
     refetch: fetchData,
   };

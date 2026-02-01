@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     }
 
     const supabase = await createServiceClient();
-    const { adminName, startingMoney } = parsed.data;
+    const { sessionName, adminName, startingMoney } = parsed.data;
 
     // Generate a unique code (retry if collision)
     let code = generateSessionCode();
@@ -39,6 +39,7 @@ export async function POST(request: Request) {
       .from("sessions")
       .insert({
         code,
+        session_name: sessionName,
         admin_name: adminName,
         starting_money: startingMoney,
       })

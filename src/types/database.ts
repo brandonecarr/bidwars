@@ -1,5 +1,6 @@
 export type SessionStatus = "lobby" | "active" | "completed";
 export type ItemStatus = "pending" | "active" | "sold" | "unsold";
+export type RoundStatus = "active" | "sold" | "unsold";
 export type AnonMode = "visible" | "hidden" | "partial";
 
 export interface Database {
@@ -9,6 +10,7 @@ export interface Database {
         Row: {
           id: string;
           code: string;
+          session_name: string;
           admin_name: string;
           admin_token: string;
           starting_money: number;
@@ -18,6 +20,7 @@ export interface Database {
         Insert: {
           id?: string;
           code: string;
+          session_name?: string;
           admin_name: string;
           admin_token?: string;
           starting_money?: number;
@@ -27,10 +30,43 @@ export interface Database {
         Update: {
           id?: string;
           code?: string;
+          session_name?: string;
           admin_name?: string;
           admin_token?: string;
           starting_money?: number;
           status?: SessionStatus;
+          created_at?: string;
+        };
+      };
+      rounds: {
+        Row: {
+          id: string;
+          session_id: string;
+          round_number: number;
+          status: RoundStatus;
+          item_id: string | null;
+          sold_to: string | null;
+          sold_price: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          session_id: string;
+          round_number: number;
+          status?: RoundStatus;
+          item_id?: string | null;
+          sold_to?: string | null;
+          sold_price?: number | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          session_id?: string;
+          round_number?: number;
+          status?: RoundStatus;
+          item_id?: string | null;
+          sold_to?: string | null;
+          sold_price?: number | null;
           created_at?: string;
         };
       };
@@ -111,13 +147,15 @@ export interface Database {
         Row: {
           id: string;
           item_id: string;
+          round_id: string | null;
           participant_id: string;
           amount: number;
           created_at: string;
         };
         Insert: {
           id?: string;
-          item_id: string;
+          item_id?: string;
+          round_id?: string | null;
           participant_id: string;
           amount: number;
           created_at?: string;
@@ -125,6 +163,7 @@ export interface Database {
         Update: {
           id?: string;
           item_id?: string;
+          round_id?: string | null;
           participant_id?: string;
           amount?: number;
           created_at?: string;

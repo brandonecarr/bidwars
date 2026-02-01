@@ -10,7 +10,11 @@ import { ItemList } from "@/components/admin/ItemList";
 import { AuctionControls } from "@/components/admin/AuctionControls";
 import { ParticipantList } from "@/components/admin/ParticipantList";
 
-export default function AdminPage({ params }: { params: Promise<{ code: string }> }) {
+export default function AdminPage({
+  params,
+}: {
+  params: Promise<{ code: string }>;
+}) {
   const { code } = use(params);
   const router = useRouter();
 
@@ -18,26 +22,17 @@ export default function AdminPage({ params }: { params: Promise<{ code: string }
     router.push("/");
   }, [router]);
 
-  const {
-    session,
-    participants,
-    items,
-    activeItem,
-    loading,
-    refetch,
-  } = useSession({
-    code,
-    onSessionEnd,
-  });
+  const { session, participants, items, rounds, activeRound, loading, refetch } =
+    useSession({ code, onSessionEnd });
 
   const { onlineUsers } = usePresence(code);
   const onlineIds = onlineUsers.map((u) => u.participantId);
 
-  async function handleStartAuction(itemId: string) {
+  async function handleStartRound() {
     await fetch(`/api/sessions/${code}/auction`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "start", itemId }),
+      body: JSON.stringify({ action: "start_round" }),
     });
   }
 
@@ -73,8 +68,12 @@ export default function AdminPage({ params }: { params: Promise<{ code: string }
     );
   }
 
-  const pendingItems = items.filter((i) => i.status === "pending").length;
-  const soldItems = items.filter((i) => i.status === "sold").length;
+  const soldRoundsNeedingAssignment = rounds.filter(
+    (r) => r.status === "sold" && !r.item_id
+  );
+  const completedRounds = rounds.filter(
+    (r) => r.status === "sold" || r.status === "unsold"
+  );
 
   return (
     <main className="min-h-screen bg-game-bg p-4">
@@ -83,7 +82,7 @@ export default function AdminPage({ params }: { params: Promise<{ code: string }
         <div className="mb-6 flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-black text-gold">BidWars</h1>
-            <p className="text-sm text-gray-500">Admin Dashboard</p>
+            <p className="text-sm text-gray-400">{session.session_name}</p>
           </div>
           <SessionCode code={code} />
         </div>
@@ -101,19 +100,40 @@ export default function AdminPage({ params }: { params: Promise<{ code: string }
             <div className="text-lg font-bold text-white">{items.length}</div>
           </div>
           <div className="flex-1 text-center">
-            <div className="text-xs text-gray-500">Pending</div>
-            <div className="text-lg font-bold text-game-accent">{pendingItems}</div>
+            <div className="text-xs text-gray-500">Bags Sold</div>
+            <div className="text-lg font-bold text-bid-green">
+              {rounds.filter((r) => r.status === "sold").length}
+            </div>
           </div>
           <div className="flex-1 text-center">
-            <div className="text-xs text-gray-500">Sold</div>
-            <div className="text-lg font-bold text-bid-green">{soldItems}</div>
+            <div className="text-xs text-gray-500">Round</div>
+            <div className="text-lg font-bold text-game-accent">
+              {rounds.length}
+            </div>
           </div>
         </div>
 
-        {/* Active auction */}
-        {activeItem && (
+        {/* Active auction or item assignment needed */}
+        {activeRound ? (
           <div className="mb-6">
-            <AuctionControls item={activeItem} code={code} />
+            <AuctionControls round={activeRound} items={items} code={code} />
+          </div>
+        ) : soldRoundsNeedingAssignment.length > 0 ? (
+          <div className="mb-6">
+            <AuctionControls
+              round={soldRoundsNeedingAssignment[0]}
+              items={items}
+              code={code}
+            />
+          </div>
+        ) : (
+          <div className="mb-6">
+            <button
+              onClick={handleStartRound}
+              className="w-full rounded-xl bg-game-accent px-6 py-4 text-xl font-black transition-all hover:bg-game-accent-light hover:scale-[1.01] active:scale-[0.99]"
+            >
+              Start Bag #{rounds.length + 1}
+            </button>
           </div>
         )}
 
@@ -133,21 +153,70 @@ export default function AdminPage({ params }: { params: Promise<{ code: string }
           {/* Left column */}
           <div className="flex flex-col gap-6">
             <ItemForm code={code} onAdded={refetch} />
-            <ParticipantList participants={participants} onlineIds={onlineIds} />
+            <ParticipantList
+              participants={participants}
+              onlineIds={onlineIds}
+            />
           </div>
 
           {/* Right column */}
-          <div>
-            <h3 className="mb-3 text-sm font-bold text-gray-400 uppercase tracking-wider">
-              Auction Queue
-            </h3>
-            <ItemList
-              items={items}
-              code={code}
-              onStartAuction={handleStartAuction}
-              onDeleteItem={handleDeleteItem}
-              hasActiveItem={!!activeItem}
-            />
+          <div className="flex flex-col gap-6">
+            <div>
+              <h3 className="mb-3 text-sm font-bold text-gray-400 uppercase tracking-wider">
+                Item Inventory
+              </h3>
+              <ItemList
+                items={items}
+                code={code}
+                onDeleteItem={handleDeleteItem}
+              />
+            </div>
+
+            {/* Round history */}
+            {completedRounds.length > 0 && (
+              <div>
+                <h3 className="mb-3 text-sm font-bold text-gray-400 uppercase tracking-wider">
+                  Round History
+                </h3>
+                <div className="flex flex-col gap-2">
+                  {completedRounds.map((r) => {
+                    const assignedItem = items.find(
+                      (i) => i.id === r.item_id
+                    );
+                    const winner = participants.find(
+                      (p) => p.id === r.sold_to
+                    );
+                    return (
+                      <div
+                        key={r.id}
+                        className="flex items-center gap-2 rounded-lg border border-game-border bg-game-surface px-3 py-2"
+                      >
+                        <span className="text-xs text-gray-600">
+                          #{r.round_number}
+                        </span>
+                        <span className="flex-1 text-sm text-white truncate">
+                          {assignedItem
+                            ? assignedItem.name
+                            : r.status === "sold"
+                              ? "Awaiting assignment"
+                              : "Skipped"}
+                        </span>
+                        {r.sold_price && (
+                          <span className="text-xs text-gold font-bold">
+                            ${r.sold_price.toLocaleString()}
+                          </span>
+                        )}
+                        {winner && (
+                          <span className="text-xs text-gray-400">
+                            {winner.name}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

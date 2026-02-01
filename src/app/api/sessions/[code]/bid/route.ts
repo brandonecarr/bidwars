@@ -39,34 +39,32 @@ export async function POST(
       return NextResponse.json({ error: "Participant not found" }, { status: 401 });
     }
 
-    // Verify item is active and belongs to this session
-    const { data: item } = await supabase
-      .from("items")
+    // Verify round is active and belongs to this session
+    const { data: round } = await supabase
+      .from("rounds")
       .select("*")
-      .eq("id", parsed.data.itemId)
+      .eq("id", parsed.data.roundId)
       .eq("session_id", participant.session_id)
       .eq("status", "active")
       .single();
 
-    if (!item) {
+    if (!round) {
       return NextResponse.json(
-        { error: "This item is not currently up for auction" },
+        { error: "No active auction right now" },
         { status: 400 }
       );
     }
 
-    // Get current highest bid
+    // Get current highest bid for this round
     const { data: currentHighest } = await supabase
       .from("bids")
       .select("*")
-      .eq("item_id", item.id)
+      .eq("round_id", round.id)
       .order("amount", { ascending: false })
       .limit(1)
       .single();
 
-    const minimumBid = currentHighest
-      ? currentHighest.amount + 1
-      : item.starting_bid;
+    const minimumBid = currentHighest ? currentHighest.amount + 1 : 1;
 
     if (parsed.data.amount < minimumBid) {
       return NextResponse.json(
@@ -83,9 +81,6 @@ export async function POST(
       );
     }
 
-    // Calculate how much more the participant needs to pay
-    // If they had a previous bid on this item, they were already refunded when outbid
-    // So we deduct the full new bid amount
     if (participant.balance < parsed.data.amount) {
       return NextResponse.json(
         { error: "Insufficient funds" },
@@ -119,7 +114,7 @@ export async function POST(
     const { data: bid, error: bidError } = await supabase
       .from("bids")
       .insert({
-        item_id: item.id,
+        round_id: round.id,
         participant_id: participant.id,
         amount: parsed.data.amount,
       })
@@ -144,7 +139,11 @@ export async function POST(
       },
       newBalance: participant.balance - parsed.data.amount,
     });
-  } catch {
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } catch (err) {
+    console.error("POST /api/sessions/[code]/bid error:", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Internal server error" },
+      { status: 500 }
+    );
   }
 }

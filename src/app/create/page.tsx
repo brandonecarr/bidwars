@@ -6,6 +6,7 @@ import Link from "next/link";
 
 export default function CreateSession() {
   const router = useRouter();
+  const [sessionName, setSessionName] = useState("");
   const [adminName, setAdminName] = useState("");
   const [startingMoney, setStartingMoney] = useState(1000);
   const [moneyDisplay, setMoneyDisplay] = useState("1,000");
@@ -39,7 +40,7 @@ export default function CreateSession() {
       const res = await fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ adminName, startingMoney }),
+        body: JSON.stringify({ sessionName, adminName, startingMoney }),
       });
 
       const data = await res.json();
@@ -69,6 +70,22 @@ export default function CreateSession() {
         </h1>
 
         <form onSubmit={handleCreate} className="flex flex-col gap-6">
+          <div>
+            <label htmlFor="sessionName" className="mb-2 block text-sm font-medium text-gray-400">
+              Session Name
+            </label>
+            <input
+              id="sessionName"
+              type="text"
+              value={sessionName}
+              onChange={(e) => setSessionName(e.target.value)}
+              placeholder="e.g. Friday Game Night"
+              maxLength={50}
+              required
+              className="w-full rounded-xl border-2 border-game-border bg-game-surface px-4 py-3 text-white placeholder-gray-600 outline-none transition-colors focus:border-game-accent"
+            />
+          </div>
+
           <div>
             <label htmlFor="adminName" className="mb-2 block text-sm font-medium text-gray-400">
               Your Name
@@ -126,7 +143,7 @@ export default function CreateSession() {
 
           <button
             type="submit"
-            disabled={loading || !adminName.trim()}
+            disabled={loading || !sessionName.trim() || !adminName.trim()}
             className="rounded-xl bg-game-accent px-8 py-4 text-lg font-bold transition-all hover:bg-game-accent-light disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.98]"
           >
             {loading ? "Creating..." : "Create Game"}

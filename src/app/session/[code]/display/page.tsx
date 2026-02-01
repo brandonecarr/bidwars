@@ -9,46 +9,38 @@ import type { Participant } from "@/types/game";
 interface SoldResult {
   winnerName: string;
   finalPrice: number;
-  itemName: string;
+  roundNumber: number;
 }
 
 export default function DisplayPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
   const [soldResult, setSoldResult] = useState<SoldResult | null>(null);
 
-  const onItemSold = useCallback(
-    (payload: { winnerName: string; finalPrice: number; itemId: string }) => {
-      // We'll set the result and clear it after a few seconds
+  const onRoundSold = useCallback(
+    (payload: { winnerName: string; finalPrice: number }) => {
       setSoldResult({
         winnerName: payload.winnerName,
         finalPrice: payload.finalPrice,
-        itemName: "", // Will be set from items
+        roundNumber: 0,
       });
     },
     []
   );
 
-  const {
-    session,
-    participants,
-    items,
-    activeItem,
-    loading,
-  } = useSession({ code, onItemSold });
+  const { session, participants, rounds, activeRound, loading } = useSession({
+    code,
+    onRoundSold,
+  });
 
-  const { bids, highestBid } = useBids(activeItem?.id || null);
+  const { bids, highestBid } = useBids(activeRound?.id || null);
 
-  // Update sold result item name
+  // Update sold result round number and auto-dismiss
   useEffect(() => {
-    if (soldResult && !soldResult.itemName) {
-      const soldItem = items.find((i) => i.status === "sold" && !soldResult.itemName);
-      if (soldItem) {
-        setSoldResult((prev) => prev ? { ...prev, itemName: soldItem.name } : null);
-      }
+    if (soldResult) {
       const timer = setTimeout(() => setSoldResult(null), 6000);
       return () => clearTimeout(timer);
     }
-  }, [soldResult, items]);
+  }, [soldResult]);
 
   if (loading) {
     return (
@@ -66,27 +58,18 @@ export default function DisplayPage({ params }: { params: Promise<{ code: string
     );
   }
 
-  // Sort participants by balance (excluding admin)
   const leaderboard = [...participants]
     .filter((p) => !p.is_admin)
     .sort((a, b) => b.balance - a.balance);
-
-  const isAnonymous = activeItem && activeItem.anon_mode !== "visible";
-  const displayName = activeItem
-    ? activeItem.anon_mode === "hidden"
-      ? "Mystery Item"
-      : activeItem.anon_mode === "partial"
-        ? `Mystery Item (${activeItem.anon_hint || "???"})`
-        : activeItem.name
-    : null;
 
   // Game over screen
   if (session.status === "completed") {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-game-bg p-8">
-        <h1 className="mb-8 text-6xl font-black text-gold">Game Over!</h1>
+        <h1 className="mb-2 text-6xl font-black text-gold">Game Over!</h1>
+        <p className="mb-8 text-xl text-gray-400">{session.session_name}</p>
         <div className="w-full max-w-lg">
-          <Leaderboard participants={leaderboard} items={items} />
+          <Leaderboard participants={leaderboard} rounds={rounds} />
         </div>
       </main>
     );
@@ -96,9 +79,14 @@ export default function DisplayPage({ params }: { params: Promise<{ code: string
     <main className="flex min-h-screen bg-game-bg">
       {/* Sold announcement overlay */}
       {soldResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" style={{ animation: "slide-up 0.5s ease-out" }}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+          style={{ animation: "slide-up 0.5s ease-out" }}
+        >
           <div className="text-center">
-            <div className="mb-4 text-2xl text-bid-green font-bold uppercase tracking-wider">Sold!</div>
+            <div className="mb-4 text-2xl text-bid-green font-bold uppercase tracking-wider">
+              Sold!
+            </div>
             <div className="text-5xl font-black text-gold mb-4">
               {formatMoney(soldResult.finalPrice)}
             </div>
@@ -111,32 +99,28 @@ export default function DisplayPage({ params }: { params: Promise<{ code: string
 
       {/* Main display */}
       <div className="flex flex-1 flex-col items-center justify-center p-8">
-        {/* Title */}
         <div className="mb-8 text-center">
           <h1 className="text-5xl font-black text-gold tracking-tight md:text-7xl">
             BID<span className="text-white">WARS</span>
           </h1>
-          <div className="mt-2 font-mono text-lg text-gray-600 tracking-[0.3em]">{code}</div>
+          <div className="mt-1 text-lg text-gray-400">{session.session_name}</div>
+          <div className="mt-1 font-mono text-sm text-gray-600 tracking-[0.3em]">
+            {code}
+          </div>
         </div>
 
-        {activeItem ? (
+        {activeRound ? (
           <div className="w-full max-w-xl text-center">
-            {/* Item name */}
-            <div className={`mb-6 text-4xl font-black md:text-5xl ${isAnonymous ? "text-purple-400" : "text-white"}`}>
-              {displayName}
+            <div className="mb-6 text-4xl font-black text-white md:text-5xl">
+              Bag #{activeRound.round_number}
             </div>
 
-            {!isAnonymous && activeItem.description && (
-              <p className="mb-6 text-xl text-gray-400">{activeItem.description}</p>
-            )}
-
-            {/* Current bid */}
             <div className="mb-8 rounded-2xl bg-game-surface border-2 border-game-border p-8">
               <div className="text-sm text-gray-500 uppercase tracking-wider mb-2">
                 Current Highest Bid
               </div>
               <div className="text-7xl font-black text-gold md:text-8xl">
-                {highestBid ? formatMoney(highestBid.amount) : formatMoney(activeItem.starting_bid)}
+                {highestBid ? formatMoney(highestBid.amount) : "$0"}
               </div>
               {highestBid && (
                 <div className="mt-3 text-2xl text-white font-bold">
@@ -145,7 +129,6 @@ export default function DisplayPage({ params }: { params: Promise<{ code: string
               )}
             </div>
 
-            {/* Bid feed */}
             <div className="flex flex-col gap-1">
               {bids.slice(0, 6).map((bid, i) => (
                 <div
@@ -153,7 +136,7 @@ export default function DisplayPage({ params }: { params: Promise<{ code: string
                   className={`flex items-center justify-between rounded-lg px-4 py-2 ${
                     i === 0 ? "bg-gold/20 text-gold" : "text-gray-500"
                   }`}
-                  style={{ animation: i === 0 ? "slide-up 0.3s ease-out" : undefined }}
+                  style={i === 0 ? { animation: "slide-up 0.3s ease-out" } : undefined}
                 >
                   <span className="font-bold">{bid.participantName}</span>
                   <span className="font-black">{formatMoney(bid.amount)}</span>
@@ -165,9 +148,7 @@ export default function DisplayPage({ params }: { params: Promise<{ code: string
           <div className="text-center">
             {session.status === "lobby" ? (
               <>
-                <div className="text-3xl text-gray-600 mb-4">
-                  Join with code
-                </div>
+                <div className="text-3xl text-gray-600 mb-4">Join with code</div>
                 <div className="font-mono text-6xl font-black text-gold tracking-[0.3em] md:text-8xl">
                   {code}
                 </div>
@@ -177,7 +158,7 @@ export default function DisplayPage({ params }: { params: Promise<{ code: string
               </>
             ) : (
               <div className="text-3xl text-gray-600">
-                Waiting for next item...
+                Waiting for next bag...
               </div>
             )}
           </div>
@@ -191,14 +172,29 @@ export default function DisplayPage({ params }: { params: Promise<{ code: string
             Leaderboard
           </h3>
           {leaderboard.map((p, i) => (
-            <div key={p.id} className="flex items-center gap-2 py-2 border-b border-game-border last:border-0">
-              <span className={`w-6 text-center text-sm font-bold ${
-                i === 0 ? "text-gold" : i === 1 ? "text-gray-400" : i === 2 ? "text-amber-700" : "text-gray-600"
-              }`}>
+            <div
+              key={p.id}
+              className="flex items-center gap-2 py-2 border-b border-game-border last:border-0"
+            >
+              <span
+                className={`w-6 text-center text-sm font-bold ${
+                  i === 0
+                    ? "text-gold"
+                    : i === 1
+                      ? "text-gray-400"
+                      : i === 2
+                        ? "text-amber-700"
+                        : "text-gray-600"
+                }`}
+              >
                 {i + 1}
               </span>
-              <span className="flex-1 text-sm font-medium text-white truncate">{p.name}</span>
-              <span className="text-sm font-bold text-gold">{formatMoney(p.balance)}</span>
+              <span className="flex-1 text-sm font-medium text-white truncate">
+                {p.name}
+              </span>
+              <span className="text-sm font-bold text-gold">
+                {formatMoney(p.balance)}
+              </span>
             </div>
           ))}
         </div>
@@ -207,12 +203,18 @@ export default function DisplayPage({ params }: { params: Promise<{ code: string
   );
 }
 
-function Leaderboard({ participants, items }: { participants: Participant[]; items: { sold_to: string | null; sold_price: number | null; name: string }[] }) {
+function Leaderboard({
+  participants,
+  rounds,
+}: {
+  participants: Participant[];
+  rounds: { sold_to: string | null; sold_price: number | null }[];
+}) {
   return (
     <div className="flex flex-col gap-3">
       {participants.map((p, i) => {
-        const wonItems = items.filter((item) => item.sold_to === p.id);
-        const totalSpent = wonItems.reduce((sum, item) => sum + (item.sold_price || 0), 0);
+        const wonRounds = rounds.filter((r) => r.sold_to === p.id);
+        const totalSpent = wonRounds.reduce((sum, r) => sum + (r.sold_price || 0), 0);
 
         return (
           <div
@@ -223,15 +225,23 @@ function Leaderboard({ participants, items }: { participants: Participant[]; ite
                 : "bg-game-surface border-2 border-game-border"
             }`}
           >
-            <span className={`text-3xl font-black ${
-              i === 0 ? "text-gold" : i === 1 ? "text-gray-400" : i === 2 ? "text-amber-700" : "text-gray-600"
-            }`}>
+            <span
+              className={`text-3xl font-black ${
+                i === 0
+                  ? "text-gold"
+                  : i === 1
+                    ? "text-gray-400"
+                    : i === 2
+                      ? "text-amber-700"
+                      : "text-gray-600"
+              }`}
+            >
               {i + 1}
             </span>
             <div className="flex-1">
               <div className="text-xl font-bold text-white">{p.name}</div>
               <div className="text-sm text-gray-500">
-                {wonItems.length} item{wonItems.length !== 1 ? "s" : ""} won
+                {wonRounds.length} bag{wonRounds.length !== 1 ? "s" : ""} won
                 {totalSpent > 0 ? ` | ${formatMoney(totalSpent)} spent` : ""}
               </div>
             </div>

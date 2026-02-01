@@ -3,20 +3,16 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { Bid } from "@/types/game";
+import type { BidWithParticipant } from "@/types/game";
 
-interface BidWithName extends Bid {
-  participantName: string;
-}
-
-export function useBids(itemId: string | null) {
-  const [bids, setBids] = useState<BidWithName[]>([]);
-  const [highestBid, setHighestBid] = useState<BidWithName | null>(null);
+export function useBids(roundId: string | null) {
+  const [bids, setBids] = useState<BidWithParticipant[]>([]);
+  const [highestBid, setHighestBid] = useState<BidWithParticipant | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const supabaseRef = useRef(createClient());
 
   const fetchBids = useCallback(async () => {
-    if (!itemId) {
+    if (!roundId) {
       setBids([]);
       setHighestBid(null);
       return;
@@ -26,13 +22,14 @@ export function useBids(itemId: string | null) {
     const { data } = await supabase
       .from("bids")
       .select("*, participant:participants(name)")
-      .eq("item_id", itemId)
+      .eq("round_id", roundId)
       .order("amount", { ascending: false });
 
     if (data) {
-      const mapped: BidWithName[] = data.map((b: Record<string, unknown>) => ({
+      const mapped: BidWithParticipant[] = data.map((b: Record<string, unknown>) => ({
         id: b.id as string,
         item_id: b.item_id as string,
+        round_id: b.round_id as string | null,
         participant_id: b.participant_id as string,
         amount: b.amount as number,
         created_at: b.created_at as string,
@@ -41,29 +38,28 @@ export function useBids(itemId: string | null) {
       setBids(mapped);
       setHighestBid(mapped[0] || null);
     }
-  }, [itemId]);
+  }, [roundId]);
 
   useEffect(() => {
     fetchBids();
   }, [fetchBids]);
 
   useEffect(() => {
-    if (!itemId) return;
+    if (!roundId) return;
 
     const supabase = supabaseRef.current;
 
     const channel = supabase
-      .channel(`bids:${itemId}`)
+      .channel(`bids:${roundId}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "bids",
-          filter: `item_id=eq.${itemId}`,
+          filter: `round_id=eq.${roundId}`,
         },
         async () => {
-          // Refetch to get participant name
           await fetchBids();
         }
       )
@@ -75,7 +71,7 @@ export function useBids(itemId: string | null) {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [itemId, fetchBids]);
+  }, [roundId, fetchBids]);
 
   return { bids, highestBid, refetch: fetchBids };
 }

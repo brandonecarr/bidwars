@@ -31,26 +31,27 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { action, itemId } = body as { action: string; itemId?: string };
+    const { action, roundId, itemId } = body as {
+      action: string;
+      roundId?: string;
+      itemId?: string;
+    };
     const supabase = await createServiceClient();
 
     switch (action) {
-      case "start": {
-        if (!itemId) {
-          return NextResponse.json({ error: "Item ID required" }, { status: 400 });
-        }
-
-        // Ensure no other item is currently active
-        const { data: activeItem } = await supabase
-          .from("items")
+      // Start a new bag round (no item linked)
+      case "start_round": {
+        // Ensure no other round is currently active
+        const { data: activeRound } = await supabase
+          .from("rounds")
           .select("id")
           .eq("session_id", session.id)
           .eq("status", "active")
           .single();
 
-        if (activeItem) {
+        if (activeRound) {
           return NextResponse.json(
-            { error: "Another item is currently being auctioned" },
+            { error: "A bag is already being auctioned" },
             { status: 400 }
           );
         }
@@ -63,39 +64,54 @@ export async function POST(
             .eq("id", session.id);
         }
 
-        // Set item to active
-        const { error } = await supabase
-          .from("items")
-          .update({ status: "active" })
-          .eq("id", itemId)
-          .eq("session_id", session.id);
+        // Get next round number
+        const { data: lastRound } = await supabase
+          .from("rounds")
+          .select("round_number")
+          .eq("session_id", session.id)
+          .order("round_number", { ascending: false })
+          .limit(1)
+          .single();
 
-        if (error) {
-          return NextResponse.json({ error: "Failed to start auction" }, { status: 500 });
+        const nextNumber = (lastRound?.round_number ?? 0) + 1;
+
+        const { data: round, error } = await supabase
+          .from("rounds")
+          .insert({
+            session_id: session.id,
+            round_number: nextNumber,
+            status: "active",
+          })
+          .select()
+          .single();
+
+        if (error || !round) {
+          return NextResponse.json({ error: "Failed to start round" }, { status: 500 });
         }
 
-        // Broadcast auction start event
+        // Broadcast round start
         const channel = supabase.channel(`session:${code}`);
         await channel.send({
           type: "broadcast",
-          event: "auction:start",
-          payload: { itemId },
+          event: "round:start",
+          payload: { roundId: round.id, roundNumber: nextNumber },
         });
         supabase.removeChannel(channel);
 
-        return NextResponse.json({ success: true });
+        return NextResponse.json({ success: true, round });
       }
 
+      // Mark bag as sold to highest bidder
       case "sold": {
-        if (!itemId) {
-          return NextResponse.json({ error: "Item ID required" }, { status: 400 });
+        if (!roundId) {
+          return NextResponse.json({ error: "Round ID required" }, { status: 400 });
         }
 
-        // Get the highest bid
+        // Get the highest bid for this round
         const { data: highestBid } = await supabase
           .from("bids")
           .select("*, participant:participants(id, name)")
-          .eq("item_id", itemId)
+          .eq("round_id", roundId)
           .order("amount", { ascending: false })
           .limit(1)
           .single();
@@ -103,61 +119,40 @@ export async function POST(
         if (!highestBid) {
           // No bids - mark as unsold
           await supabase
-            .from("items")
+            .from("rounds")
             .update({ status: "unsold" })
-            .eq("id", itemId);
+            .eq("id", roundId);
 
           const channel = supabase.channel(`session:${code}`);
           await channel.send({
             type: "broadcast",
-            event: "auction:end",
-            payload: { itemId, result: "unsold" },
+            event: "round:skip",
+            payload: { roundId, result: "unsold" },
           });
           supabase.removeChannel(channel);
 
           return NextResponse.json({ success: true, result: "unsold" });
         }
 
-        // Mark as sold to highest bidder
+        // Mark round as sold
         await supabase
-          .from("items")
+          .from("rounds")
           .update({
             status: "sold",
             sold_to: highestBid.participant_id,
             sold_price: highestBid.amount,
           })
-          .eq("id", itemId);
+          .eq("id", roundId);
 
-        // Refund all non-winning bidders for this item
-        // Get all unique bidders except winner
-        const { data: allBids } = await supabase
-          .from("bids")
-          .select("participant_id, amount")
-          .eq("item_id", itemId)
-          .neq("participant_id", highestBid.participant_id)
-          .order("amount", { ascending: false });
-
-        // Get unique bidders and their highest bid (already deducted)
-        const refundedParticipants = new Set<string>();
-        if (allBids) {
-          for (const bid of allBids) {
-            if (!refundedParticipants.has(bid.participant_id)) {
-              refundedParticipants.add(bid.participant_id);
-              // Their balance was reduced to (balance - bid.amount) when they bid,
-              // but was refunded when outbid. No action needed here since
-              // outbid refunds happen in the bid API.
-            }
-          }
-        }
-
-        const winnerName = (highestBid.participant as unknown as { name: string })?.name || "Unknown";
+        const winnerName =
+          (highestBid.participant as unknown as { name: string })?.name || "Unknown";
 
         const channel = supabase.channel(`session:${code}`);
         await channel.send({
           type: "broadcast",
-          event: "item:sold",
+          event: "round:sold",
           payload: {
-            itemId,
+            roundId,
             winnerId: highestBid.participant_id,
             winnerName,
             finalPrice: highestBid.amount,
@@ -174,21 +169,22 @@ export async function POST(
         });
       }
 
+      // Skip/cancel the current round
       case "skip": {
-        if (!itemId) {
-          return NextResponse.json({ error: "Item ID required" }, { status: 400 });
+        if (!roundId) {
+          return NextResponse.json({ error: "Round ID required" }, { status: 400 });
         }
 
-        // Refund all bidders on this item
-        const { data: itemBids } = await supabase
+        // Refund the current highest bidder (others already refunded when outbid)
+        const { data: topBids } = await supabase
           .from("bids")
           .select("participant_id, amount")
-          .eq("item_id", itemId)
-          .order("amount", { ascending: false });
+          .eq("round_id", roundId)
+          .order("amount", { ascending: false })
+          .limit(1);
 
-        // Refund the current highest bidder (others already refunded when outbid)
-        if (itemBids && itemBids.length > 0) {
-          const topBid = itemBids[0];
+        if (topBids && topBids.length > 0) {
+          const topBid = topBids[0];
           const { data: participant } = await supabase
             .from("participants")
             .select("balance")
@@ -204,19 +200,63 @@ export async function POST(
         }
 
         await supabase
-          .from("items")
+          .from("rounds")
           .update({ status: "unsold" })
-          .eq("id", itemId);
+          .eq("id", roundId);
 
         const channel = supabase.channel(`session:${code}`);
         await channel.send({
           type: "broadcast",
-          event: "auction:end",
-          payload: { itemId, result: "skipped" },
+          event: "round:skip",
+          payload: { roundId, result: "skipped" },
         });
         supabase.removeChannel(channel);
 
         return NextResponse.json({ success: true, result: "skipped" });
+      }
+
+      // Admin assigns an item to a sold round (after reveal)
+      case "assign_item": {
+        if (!roundId || !itemId) {
+          return NextResponse.json(
+            { error: "Round ID and Item ID required" },
+            { status: 400 }
+          );
+        }
+
+        await supabase
+          .from("rounds")
+          .update({ item_id: itemId })
+          .eq("id", roundId)
+          .eq("session_id", session.id);
+
+        // Also mark the item as sold
+        const { data: round } = await supabase
+          .from("rounds")
+          .select("sold_to, sold_price")
+          .eq("id", roundId)
+          .single();
+
+        if (round) {
+          await supabase
+            .from("items")
+            .update({
+              status: "sold",
+              sold_to: round.sold_to,
+              sold_price: round.sold_price,
+            })
+            .eq("id", itemId);
+        }
+
+        const channel = supabase.channel(`session:${code}`);
+        await channel.send({
+          type: "broadcast",
+          event: "round:assign",
+          payload: { roundId, itemId },
+        });
+        supabase.removeChannel(channel);
+
+        return NextResponse.json({ success: true });
       }
 
       case "end_session": {
@@ -239,7 +279,11 @@ export async function POST(
       default:
         return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
-  } catch {
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } catch (err) {
+    console.error("POST /api/sessions/[code]/auction error:", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Internal server error" },
+      { status: 500 }
+    );
   }
 }
