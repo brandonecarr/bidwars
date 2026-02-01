@@ -88,9 +88,10 @@ export async function POST(request: Request) {
       code: session.code,
       sessionId: session.id,
     });
-  } catch {
+  } catch (err) {
+    console.error("POST /api/sessions error:", err);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: err instanceof Error ? err.message : "Internal server error" },
       { status: 500 }
     );
   }
