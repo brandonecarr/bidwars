@@ -78,7 +78,7 @@ export default function CreateSession() {
                 value={startingMoney}
                 onChange={(e) => setStartingMoney(Number(e.target.value))}
                 min={100}
-                max={1000000}
+                max={10000000}
                 step={100}
                 required
                 className="w-full rounded-xl border-2 border-game-border bg-game-surface px-4 py-3 pl-8 text-white placeholder-gray-600 outline-none transition-colors focus:border-game-accent"
