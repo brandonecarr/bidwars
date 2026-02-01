@@ -8,6 +8,25 @@ export default function CreateSession() {
   const router = useRouter();
   const [adminName, setAdminName] = useState("");
   const [startingMoney, setStartingMoney] = useState(1000);
+  const [moneyDisplay, setMoneyDisplay] = useState("1,000");
+
+  function handleMoneyChange(value: string) {
+    const digits = value.replace(/[^0-9]/g, "");
+    if (!digits) {
+      setStartingMoney(0);
+      setMoneyDisplay("");
+      return;
+    }
+    const num = parseInt(digits, 10);
+    if (num > 10000000) return;
+    setStartingMoney(num);
+    setMoneyDisplay(num.toLocaleString());
+  }
+
+  function handleMoneyPreset(amount: number) {
+    setStartingMoney(amount);
+    setMoneyDisplay(amount.toLocaleString());
+  }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -74,12 +93,11 @@ export default function CreateSession() {
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gold font-bold">$</span>
               <input
                 id="startingMoney"
-                type="number"
-                value={startingMoney}
-                onChange={(e) => setStartingMoney(Number(e.target.value))}
-                min={100}
-                max={10000000}
-                step={100}
+                type="text"
+                inputMode="numeric"
+                value={moneyDisplay}
+                onChange={(e) => handleMoneyChange(e.target.value)}
+                placeholder="1,000"
                 required
                 className="w-full rounded-xl border-2 border-game-border bg-game-surface px-4 py-3 pl-8 text-white placeholder-gray-600 outline-none transition-colors focus:border-game-accent"
               />
@@ -89,7 +107,7 @@ export default function CreateSession() {
                 <button
                   key={amount}
                   type="button"
-                  onClick={() => setStartingMoney(amount)}
+                  onClick={() => handleMoneyPreset(amount)}
                   className={`rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
                     startingMoney === amount
                       ? "bg-game-accent text-white"
